@@ -1,0 +1,540 @@
+\documentclass[12pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage{newtxtext, newtxmath}
+\usepackage[margin=1in]{geometry}
+\usepackage{titling}
+\usepackage{titlesec}
+\usepackage{lipsum}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{cleveref}
+\usepackage{xcolor}
+\usepackage{subcaption}
+\usepackage[title,titletoc]{appendix}
+\usepackage[htt]{hyphenat}
+\usepackage[titles]{tocloft}
+\graphicspath{{./figures/}}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{1ex}
+\setlength{\droptitle}{-6em}
+
+\pretitle{\begin{center}\large}
+\title{\MakeUppercase{\bfseries Talking Handouts: lecture audio - handout alignment}}
+\posttitle{\\[1ex] Final Report \end{center}}
+
+\predate{}
+\date{}
+\postdate{}
+
+\preauthor{\begin{center}}
+\author{\textit{Charles Zhou}}
+\postauthor{\\Magdalene College\\Supervisors: Prof. Phil Woodland and Dr. Chao Zhang\end{center}}
+
+\titleformat{\section}
+{\large\bfseries\centering} % format
+{\thesection} % label
+{1ex} % space between label & text
+{\MakeUppercase} % before code
+
+\titleformat{\subsection}
+{\bfseries} % format
+{\thesubsection} % label
+{1ex} % space between label & text
+{\MakeUppercase} % before code
+
+\titleformat{\subsubsection}
+{\small\bfseries} % format
+{\thesubsubsection} % label
+{1ex} % space between label & text
+{} % before code
+
+\titlespacing*{\section}
+{0pt}{1.2ex plus 0ex minus 0ex}{1ex plus 0ex}
+\titlespacing*{\subsection}
+{0pt}{0.9ex plus 0ex minus 0ex}{0.5ex plus 0ex}
+\titlespacing*{\subsubsection}
+{0pt}{0.3ex plus 0ex minus 0ex}{0.1ex plus 0ex}
+
+\begin{document}
+
+\maketitle
+
+\tableofcontents
+
+\section*{TECHNICAL ABSTRACT}
+
+{ \color{blue}
+    The increasing availability of web-based lecture data implies possibilities of building additional software interfaces based on these resources such as automated lecture captioning systems. This project will focus on designing and implementing a software interface which can generate links from lecture handouts/slides to the corresponding parts of the lecture recordings. A dedicated software system, which consists of an OCR engine, a speech recogniser and a core alignment algorithm, has been developed to investigate the feasibility of this idea. This report describes the structure and implementation details of the system, and explains the evaluation framework of the system. Possible future improvements of the system are also identified at the end.
+}
+
+\newpage
+\section{INTRODUCTION}
+
+\subsection{BACKGROUND}
+
+% Cambridge Strategy on Education Digitisation
+During the academic year 2016-17, Cambridge University ran a pilot project on Lecture Capture (part of the University's \textit{Digital Strategy for Education} \cite{digitstrategy}), with the aim to make the lecture recordings accessible online and hence to enhance the overall educational experience of current and future Cambridge students. The pilot project has been proven to be successful and the University now plans to publish Lecture Capture as a service in conjunction with University Information Service (UIS) \cite{lectcap}.
+
+% CUED Panopto
+In the context of CUED Teaching, full video recordings together with corresponding handouts of the first and second year courses are now available to students through the Panopto service. The service offers various functionalities like video playback (with aligned handout projections) and lecture captioning, as shown in \Cref{fig:panopto}. The service allows students to conveniently revise hard topics and also relieves them of the stress of note-taking. 
+
+\begin{figure}[!htb]
+    \centering
+    \includegraphics[width=0.96\textwidth]{panopto.png}
+    \caption{An Example Screenshot of the Panopto Service}
+    \label{fig:panopto}
+\end{figure}
+
+\subsection{MOTIVATION OF THE PROJECT}
+
+The availability of the online lecture playback service implies possibilities of building additional interfaces on top of these lecture recordings and their associated handouts. The close correlation between lecture handouts and their corresponding recordings can also be exploited when designing these interfaces. For example, a speech recogniser for automatic lecture transcription can have significantly reduced error rates if we fine-tune the language model with data in the corresponding handouts\,\cite{transslide}.
+
+This project aims to investigate an alternative style of interface to the lecture data which is based on the handouts themselves, with the aim to provide direct links from the handouts/slides to the associated parts of the lecture recordings. The handouts are supposed to be decomposed into chunks of information (e.g paragraphs, mathematical equations), each of which maps to a starting time and an ending time in the lecture audio file. With these mappings, it would be possible for students to revisit a particular section of the lecture recording which directly explains a chunk of handout, by simply just clicking that chunk in the PDF version of the handout. This idea is termed as `Talking Handouts', which is the title of the project.
+
+\subsection{UNIQUENESS OF THE PROJECT}
+
+This project is the very first one in the context of CUED fourth-year projects with the same topic. The nature of the project is to investigate the idea of aligning chunks of handout information with corresponding lecture recording by integrating various technologies (OCR, Speech Recogniser, etc.) into a single working system which does the alignment job. The task description, the system architecture and the evaluation framework all need to be specified during the project, since they were not well-defined before the commencement of the project. Although there are numerous tools and papers regarding the different technologies involved in the system, little information could be found regarding the design, implementation and evaluation of such systems.
+
+\section{DESCRIPTION OF THE TASK}
+
+\subsection{OVERVIEW}
+
+The task of this project is to design, implement and evaluate a software system which takes as inputs a handout file and its corresponding lecture audio file, and outputs the alignment result which maps each chunk of the handout to the corresponding part (starting time + ending time) of the lecture audio file. The handout files are assumed to be in PDF format, but the lecture audio files may take various formats. The alignment output is assumed to be taking the JSON format, which is readable by both human and computers. With the alignment output, we can make the handouts `talk' by embedding audio links to the PDF files, or by building dedicated software to emulate this feature. 
+
+\subsection{SYSTEM INPUT 1: HANDOUTS}
+\label{sec:input-handout}
+
+The handouts are collections of necessary textual and figural information for the purpose of teaching specific courses, which form the crucial part of the system inputs. The handouts are supposed to be taking the PDF (Portable Document Format) format, which should be the most popular format for lecturers to present lecture notes. Different lecturers may adopt different styles of handouts, in order to suit the different teaching requirements of the courses. 
+
+\subsubsection{Modelling the handouts}
+
+A proper model of the handouts is required for the purpose of designing the software system. At the first level of abstraction, a handout can be seen as a sequence of images. Each of the images could be further decomposed into the following basic components:
+\begin{itemize}
+    \setlength{\itemsep}{0.05em}
+    \item Handwritten / Printed Text
+    \item Handwritten / Printed Equations
+    \item Tables, Figures, etc.
+\end{itemize}
+Since interpreting complex components like equations, tables and figures could be really difficult and requires sophisticated algorithms, the project focuses only on the recognition of handwritten and printed text and ignores the rest.
+
+\subsubsection{Different styles of handouts}
+
+In CUED teaching, there are mainly two styles of handouts. Handouts of the first style are lecture notes of A4 size with lots of large gaps in between, which are supposed to be filled in with additional notes during the lectures. Handouts of the second style are purely digital and are essentially just PowerPoint presentations (usually landscape orientation).
+
+\textcolor{red}{Add some example figures of handouts}
+
+The first style is a classical style which is widely used in CUED Part IA \& IB teaching (first and second years). The second style is more modern and is mostly used in Part IIA \& IIB (third and fourth years), especially in Division F. Since we are interested in recognising both handwritten and printed text, the project is focused on handouts of the `classical' style.
+
+\subsection{SYSTEM INPUT 2: LECTURE AUDIO FILES}
+\label{sec:input-audio}
+
+Another important system input is the lecture audio file corresponding to the input handout PDF file. The format of the audio file is not particularly specified since we can convert the audio file into any desired format with a proper audio transcoder. Also, different subsystems in the system might require different audio input formats, so the format of the audio file input is of minor importance since it will be transcoded eventually. 
+
+\subsection{SYSTEM OUTPUT: ALIGNMENT RESULT}
+\label{sec:system-output}
+
+The eventual output of the software system is the alignment result which describes the matches between the chunks of the handout input and the segments of the associated audio file. Technically, any suitable form of text file could be used to describe the alignment result. In this project, the alignment output uses the JSON (JavaScript Object Notation) format since it's well strctured, completely human-readable and easily interpretable by computer programs.
+
+\textcolor{red}{Add figure: left: any text file, right: JSON of same stuff}
+
+There are several ways to combine the PDF file with the alignment result and make the handout play back a part of the lecture recording upon clicking the corresponding chunk in the PDF file. As the first way, audio links could be embedded directly in the handout PDF file based on the alignment result from the system output. Unfortunately, this could only be done manually in Adobe Acrobat Pro and there's no automated way to achieve this. This project adopts an alternative way of doing the same job, by building auxilliary software which renders the PDF file and emulates the functionalities of embedded audio links.
+
+\subsection{AVAILABLE TRAINING DATA}
+
+Professor Malcolm Smith from the Control Group has kindly provided his full PDF lecture notes of Part IA Mathematics (Easter Term 2010) and all associated video recordings for usage within the scope of the project. The lecture data consists of 2 handout PDF files (41 A4 pages in total) and 7 associated lecture video files (each file roughly hour-long). These available handouts contain a large portion of handwritten notes and hence they belong to the `classical' style.
+
+
+\section{SYSTEM ARCHITECTURE}
+
+\subsection{OVERVIEW}
+
+\Cref{fig:struct} shows the diagram of the software system architecture. The system could be decomposed into several subsystems, including the OCR (Optical Character Recognition) engine, the speech recogniser and the core alignment algorithm.
+
+\begin{figure}[!ht]
+    \centering
+    \includegraphics[width=0.75\textwidth]{struct}
+    \caption{A simplified diagram of the software system architecture}
+    \label{fig:struct}
+\end{figure}
+
+% how the system works
+The handout PDF file and the corresponding audio file (the two main system inputs, as described in \Cref{sec:input-handout} and \Cref{sec:input-audio}), are first fed into the speech recogniser and the OCR engine respectively. The OCR engine takes as input the handout PDF file and extracts textual information from the handout. The speech recogniser produces a transcript based on the input lecture audio file. The core alignment algorithm finds the correspondence between the audio transcript and the extracted handout text, and then generates the alignment result. The alignment result can then be used to generate links from the handout chunks to the correct parts of the audio file.
+
+% some intuitions
+The intuition of the system design is that both the handout and the lecture audio file can be regarded as text strings. OCR engines and Speech Recognisers are the best known tools to do the image-to-text and speech-to-text tasks respectively. Another subsystem could be built to compare the two text strings and produce the final alignment result, which is just the core alignment algorithm. Since this project is quite exploratory and time for the project is limited, we shall keep the system as simple as possible and adopt the straightforward design which consists of only 3 subsystems, as shown in \Cref{fig:struct}.
+
+\subsection{OCR ENGINE}
+
+An OCR (Optical Character Recognition) engine converts the visual representation of text (images) to machine-encoded text (e.g Unicode text). The OCR engine in the system reads the input handout file and extracts textual information within it, which could then be used by the core alignment algorithm.
+
+\subsubsection{Input}
+
+For most of the publicly available OCR engines, only image files (e.g PNG, JPEG, TIFF) are accepted as inputs, rather than PDF files. Therefore, additional processing which converts the PDF file to a sequence of images is needed before feeding the input to the actual OCR engine. 
+
+\subsubsection{Output}
+
+Up to this point, we have actually omitted an important feature when describing the output of the OCR engine: the output text is actually enclosed in a set of bounding-boxes generated by the Page Layout Analysis (PLA) of the OCR engine. Note that PLA is a standard step for most OCR engines. The PLA step could be operated at different scales, which in turn produces different levels of bounding-boxes (e.g words, lines, paragraphs). The bounding-boxes are considered to be the atomic chunks of the handout which are used for the final alignment process.
+
+\subsubsection{Desired properties}
+
+A good OCR engine should be able to recognise printed text of various fonts with high accuracy. Recognition of handwritten text is clearly harder due to the uncertainty of the writing style, however the ability of recognising handwritten text is still desirable since handwritten text is of great interest for the project. Also, the Page Layout Analysis (PLA) of the OCR engine should be as accurate as possible.
+
+\subsection{SPEECH RECOGNISER}
+
+A speech recogniser converts human speeches (audio files) to machine-encoded text (e.g Unicode text). Speech recognisers can be trained to recognise different languages (English, Chinese, etc.) in different contexts (math lectures, president speeches, etc.). The output of the speech recogniser is also called the transcript of the input audio file.
+
+\subsubsection{Input}
+
+Different speech recognisers may require different digital format of the input audio file. Usually speech recognisers would prefer the original (uncompressed) audio formats like WAV, or lossless compressed audio formats like FLAC (Free Lossless Audio Codec). However, the input format requirement should not be an issue since there are lots of free audio transcoders available for use.
+
+\subsubsection{Output}
+
+The output of the speech recogniser is a machine-encoded text string which is also named as the `transcript'. The transcript is usually segmented based on the long pauses in the input speech, and each of the segments is usually associated with a confidence score and a timestamp as in the original audio file. Optionally, timestamps for each word could also be provided in addition to the segment-level timestamps.
+
+\subsubsection{Desired properties}
+
+The Word Error Rate (WER) is a common measure of the performances of speech recognisers. A good speech recogniser should have a WER as low as possible. It would also be desirable if a speech recogniser could fit into as many different contexts as possible, although we could fine-tune the speech recogniser to adapt to a specific topic using additional training data.
+
+\subsection{ALIGNMENT ALGORITHM}
+
+The alignment algorithm finds the correspondence between handout chunks and audio segments, based on the textual outputs from the OCR engine and the speech recogniser. This is the core system part which determines the mappings between the handout and the corresponding audio file. 
+
+\subsubsection{Input}
+
+As \Cref{fig:struct} shows, the two outputs from the OCR engine and the speech recogniser becomes the two inputs of the alignment algorithm. Both inputs are essentially just segmented text strings: the extracted handout text is segmented by the bounding-boxes and the audio file is segmented into shorter text strings based on the pauses in the speech.
+
+\subsubsection{Output}
+\label{sec:sysarch-align-output}
+
+The alignment output coincides with the system output, which has been explained in \Cref{sec:system-output}. Each chunk (bounding-box) of the handout should be mapped to a starting time and an ending time as in the associated audio file. 
+
+A simple alignment approach would be mapping each handout chunk directly to a sequence of consecutive segments of the audio transcript, and then recover the starting and ending times from the timestamps of the segments. In this case, the temporal resolution of the alignment would be limited by the speech recogniser output. However, if the word-level timestamps could be obtained from the speech recogniser output, it would be possible to improve the temporal resolution significantly.
+
+\subsubsection{Desired properties}
+
+The alignment algorithm should have decent accuracy under the evaluation framework described in \Cref{sec:system-eval}. Also the temporal resolution of the alignment, as mentioned in \Cref{sec:sysarch-align-output}, should be as high as possible.
+
+
+\section{SYSTEM IMPLEMENTATION}
+
+\textcolor{red}{\Large This section is exactly the same as the corresponding section in TMR. The descriptions of the tools need to be re-organised in a more logical way, and some of the information might be out-of-date.}
+
+\subsection{OVERVIEW}
+
+The subsystems of the current software system are implemented as follows:
+\begin{itemize}
+    \setlength{\itemsep}{0.05em}
+    \item \textbf{OCR Engine:} Tesseract OCR \cite{tesseract}
+    \item \textbf{Speech Recogniser:} Google Cloud Speech-to-Text API \cite{googlecloud}
+    \item \textbf{Alignment Algorithm:} Word-based \texttt{diff} algorithm
+\end{itemize}
+The main language used in the system is Python, since it's flexible to use and it has very good library support. The tools listed above all have their own Python wrappers/APIs.
+
+\subsection{OCR ENGINE: TESSERACT}
+
+% intro, features
+Tesseract OCR is an open-source OCR engine sponsored by Google since 2006. It is able to do page layout analysis (PLA) which finds bounding-boxes of texts at 5 different levels (word, line, paragraph, block, page). The engine also calculates a confidence score (0 - 100) for each recognised word. Tesseract 4.0 (most recent version) includes an LSTM-based neural network model (pre-trained with 400000 textlines spanning around 4500 fonts), which provides higher accuracy than previous versions. The engine could also be fine-tuned or retrained using additional data.
+
+Tesseract OCR is integrated into the current system using its (non-official) Python wrapper called \texttt{pytesseract}. Before running Tesseract, the input PDF handout is converted to a list of PIL (Python Imaging Library) images, each of which will then be processed individually by Tesseract. From the Tesseract output, we select chunks of texts at paragraph level, and directly discard the words whose confidence scores are below a certain threshold (currently 75).
+
+% Tesseract OCR has \textbf{decent accuracy} on recognising printed text, but for the handwritten text its accuracy highly depends on the quality of the text (unfortunately very bad in general).
+
+According to \cite{tesseval}, Tesseract OCR has around 80\% character-level accuracy when tested on printed characters (which is good enough), but its accuracy drops to 48\% when tested on handwritten characters. Tesseract OCR is also incapable of recognising printed/handwritten equations. The quality of the page layout analysis also depends on the complexity of the layout.
+
+\subsection{SPEECH RECOGNISER: GOOGLE CLOUD SPEECH-TO-TEXT API}
+
+The current system uses the Python interface of the Google Cloud Speech-to-Text API as the speech recogniser. For long audio files like lecture recordings (typically an hour), the transcription process for the Google Cloud is done asynchronously: the client sends a request to the Google Cloud server; the server processes the input audio data (may take a while); the server sends back the transcription result to the client. The transcription result is a list of segments, each of which contains the transcribed text, its timestamp and a confidence score (0 - 100). Currently the speech recogniser part is not the main focus of the project.
+
+% Currently the speech recogniser part is not the focus of the project since there's already another 4th year project whose main focus is making a better lecture transcription system. 
+% It's possible that the current system can be combined with that transcription system to provide a better overall alignment result.
+% maybe footnote?
+
+\subsection{ALIGNMENT ALGORITHM: WORD-BASED DIFF ALGORITHM}
+
+The \texttt{diff} utility is originally a Unix command-line tool which calcuates and displays the differences between two files. The \texttt{diff} algorithm essentially solves the \textit{longest common subsequence} problem between two sequences of items. For either sequence, those items which are not in the longest common subsequence indicate occurrences of differences compared to the other sequence.
+
+The current alignment algorithm uses a word-based \texttt{diff} algorithm, which means that the inputs of the algorithm are two sequences of words. The outputs from the OCR engine and the speech recogniser are converted to two lists of words respectively, which then become the inputs for the \texttt{diff} algorithm. Python implements the \texttt{diff} algorithm as a function called \texttt{ndiff} in the library \texttt{difflib}.
+
+\begin{figure}[!htb]
+    \centering
+    \includegraphics[width=0.7\textwidth]{diffmatch}
+    \caption{A single handout chunk might be mapped to multiple audio segments}
+    \label{fig:diffmatch}
+\end{figure}
+
+The \texttt{diff} algorithm solves the longest common subsequence between two word sequences generated from the extracted handout chunks and the audio segments. The current alignment algorithm matches each handout chunk with the first audio segment in the sequence with the property that they have a matching sequence of 3 consecutive words, which uses the idea in \cite{diffref}. Here we say two words from two sequences form a match if both of them appear at the same position in the longest common subsequence given by the \texttt{diff} algorithm. As \Cref{fig:diffmatch} shows, a single handout chunk may correspond to multiple audio segments since the lecture audio generally contains more text than the handout. The double-headed arrows indicate matches given by the alignment algorithm, which could also be regarded as `anchor points' in the sequence of audio segments.
+
+
+\section{MODELLING THE BASIC ELEMENTS}
+\label{sec:basic-elems}
+
+\subsection{OVERVIEW}
+
+Before introducing the evaluation framework and the software setup, we first need to explain the basic elements used in the system. Each of the basic elements is implemented as a Python class in the actual code. The definition of these basic elements forms the basis of the evaluation framework and the actual code implementation.
+
+The basic elements are abstractions of the data in the system, and some of the elements are actually used as the inputs and outputs of the subsystems. The reason for placing the introduction of basic elements after introducing the inputs and outputs of the subsystems is that we try to avoid getting too technical at the very beginning and it would be easier to understand the basic elements after knowing roughly how the system works. 
+
+\subsection{ELEMENTS RELATED TO THE OCR ENGINE}
+
+\subsubsection{The BBox class}
+
+The class name \texttt{BBox} stands for `bounding-box'. The \texttt{BBox} class defines the fundamental building block of the OCR output. An object of the \texttt{BBox} class contains a rectangle specified by the coordinates of the top-left and bottom-right corners, and also the enclosed text string. \Cref{fig:bbox-example} shows an example \texttt{BBox} object. 
+
+% bbox + bboxgroup
+\begin{figure}[ht]
+    \centering
+    \begin{subfigure}[t]{0.49\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{bbox.jpeg}
+        \caption{A \texttt{BBox} object}
+        \label{fig:bbox-example}
+    \end{subfigure}%
+    ~ 
+    \begin{subfigure}[t]{0.49\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{bboxgroup.jpeg}
+        \caption{A \texttt{BBoxGroup} object}
+        \label{fig:bboxgroup-example}
+    \end{subfigure}
+    \caption{Examples of \texttt{BBox} and \texttt{BBoxGroup} objects}
+\end{figure}
+
+\subsubsection{The BBoxGroup class}
+
+A \texttt{BBoxGroup} object is simply a collection of \texttt{BBox} objects. Usually the \texttt{BBox} objects contained in a \texttt{BBoxGroup} object are closely related to each other, for example a sentence across multiple lines can be expressed as a \texttt{BBoxGroup} object. \Cref{fig:bboxgroup-example} shows an example \texttt{BBoxGroup} object.
+
+The \texttt{BBoxGroup} class defines the atomic level of alignment input at the OCR side. The single mapping from a \texttt{BBoxGroup} object to the corresponding parts of the audio file cannot be further divided.
+
+\subsubsection{The BBoxGroups class}
+
+As the class name suggests, a \texttt{BBoxGroups} object is simply a collection of \texttt{BBoxGroup} objects. In the actual implementation, the \texttt{BBoxGroups} class inherits from the Python's built-in \texttt{list} class, and hence a \texttt{BBoxGroups} object has all the properties of Python lists.
+
+The output of the OCR engine is a \texttt{BBoxGroups} object, which is a list of atomic objects for the alignment process. 
+
+\subsection{ELEMENTS RELATED TO THE SPEECH RECOGNISER}
+
+\subsubsection{The TStamp class}
+
+A \texttt{TStamp} object represents a timestamp in the audio file. The class defines three attributes: \texttt{min} (minutes), \texttt{sec} (seconds, within range [0, 59]) and \texttt{msec} (milliseconds, within range [0, 999]).
+
+\subsubsection{The TInterval class}
+
+A \texttt{TInterval} object represents an interval in the audio file which consists of two \texttt{TStamp} objects, indicating the starting timestamp and the ending timestamp respectively. This class provides an straightforward way of representing segments of the audio file.
+
+\subsubsection{The WStamp class}
+
+The class name \texttt{WStamp} stands for `word with a timestamp'. A \texttt{WStamp} object represents a recognised word and the associated starting timestamp as in the input audio file. This class forms the basis of the speech recogniser output, which is also called the transcript of the audio file. 
+
+\subsubsection{The WStamps class}
+
+A \texttt{WStamps} object is a collection of multiple \texttt{WStamp} objects. Similar to the \texttt{BBoxGroups} class, the \texttt{WStamps} class also inherits from the Python built-in \texttt{list} class.
+
+This class can be used to describe the speech recogniser output (also called the `transcript'). In the actual system implementation, the output of the speech recogniser is just a \texttt{WStamps} object.
+
+\subsection{ELEMENTS RELATED TO THE ALIGNMENT ALGORITHM}
+
+\subsubsection{The TIntervalGroup class}
+
+A \texttt{TIntervalGroup} object is a collection of multiple \texttt{TInterval} objects. In the final alignment result, each \texttt{BBoxGroup} object uniquely matches a \texttt{TIntervalGroup} object. Hence, the \texttt{TIntervalGroup} class is a fundamental part of the alignment result.
+
+\subsubsection{The Match class}
+
+A \texttt{Match} object simply represents a single match in the alignment result, which consists of a {BBoxGroup} object and a \texttt{TIntervalGroup} object. 
+
+\subsubsection{The Matches class}
+\label{sec:basic-elem-matches}
+
+A \texttt{Matches} object is a collection of multiple \texttt{Match} objects. This class also inherits from the Python built-in \texttt{list} class. In the actual implementation, the final alignment result is a \texttt{Matches} object. \Cref{fig:matches} shows the relationships between different classes, starting from a \texttt{Matches} object.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.9\textwidth]{matches.png}
+    \caption{Relationships between different classes inside a \texttt{Matches} object}
+    \label{fig:matches}
+\end{figure}
+
+\subsection{ELEMENTS AS INPUTS AND OUTPUTS WITHIN THE SYSTEM}
+
+The following list summarises the relationships between the basic elements and the inputs / outputs within the system (also shown in \Cref{fig:struct-elem}):
+\begin{itemize}
+    \setlength{\itemsep}{0.05em}
+    \item \texttt{BBoxGroups}: OCR output / alignment input
+    \item \texttt{WStamps}: speech recogniser output / alignment input
+    \item \texttt{Matches}: alignment output
+\end{itemize}
+
+\begin{figure}[ht]
+    \centering
+    \includegraphics[width=0.75\textwidth]{structwithelem.png}
+    \caption{Basic elements as inputs / outputs within the system}
+    \label{fig:struct-elem}
+\end{figure}
+
+
+\section{SYSTEM EVALUATION}
+\label{sec:system-eval}
+
+\subsection{OVERVIEW}
+
+This section describes the internals of the second generation (currently used) evaluation framework which evolved from the first generation framework described in Appendix \ref{sec:first-gen-eval}. \Cref{tab:comp-two-gens} compares the first and second generation frameworks.
+
+\begin{table}[ht]
+    \centering
+    \begin{tabular}{|p{6.5cm}|p{6.5cm}|}
+        \hline
+        \textbf{First Generation} & \textbf{Second Generation} \\ \hline
+        Ground-truth data depends on the subsystem outputs &
+        Ground-truth data only depends on the input lecture data \\ \hline
+        Multiple sets of ground-truth data needed for evaluating different subsystems &
+        Single set of ground-truth data (a \texttt{Matches} object) suffices to evaluate the whole system \\ \hline
+        Developed before the definitions of the basic elements (explained in \Cref{sec:basic-elems}), evaluation parameters not well-defined &
+        Developed after the definitions of the basic elements (explained in \Cref{sec:basic-elems}), better-defined evaluation parameters \\ \hline
+        Evaluation of alignment algorithm based on transcript segmented by the long pauses in the speech &
+        Evaluation of alignment algorithm based on transcript with word-level timestamps (a \texttt{WStamps} object) \\ \hline
+        Framework includes the WER evaluation of the speech recogniser output (transcript) &
+        WER evaluation of the speech recogniser output (transcript) removed in the new framework \\ \hline
+        Evaluation becomes hard when the scale of the OCR output changes &
+        Easy to deal with different scales of the OCR output due to the flexibility of the basic element definitions (\Cref{sec:basic-elems}) \\ \hline
+    \end{tabular}
+    \caption{Comparison between the first and second generation evaluation frameworks}
+    \label{tab:comp-two-gens}
+\end{table}
+
+Note that the WER evaluation of the speech recogniser output (transcript) has been removed in the second generation framework, since the speech recogniser part is currently not the focus of the project. We shall assume that the speech recogniser (Google Cloud) will have consistent performance across different inputs, and its typical WER value is around 15\% (based on the previous evaluation results in \Cref{tab:eval}).
+
+\subsection{THE GROUND-TRUTH DATA}
+
+\textcolor{red}{\large might need more explanation}
+
+The ground-truth data of a single set of input lecture data (a handout PDF file + its associated audio file) could be represented by a \texttt{Matches} object described in \Cref{sec:basic-elem-matches}. Each \texttt{BBoxGroup} object in the ground-truth data should be as tiny (in its total area) as possible in order to ensure the feasibility of the multi-scale evaluation explained later in \Cref{sec:multi-scale-eval}.
+
+\subsection{EVALUATION OF THE PAGE LAYOUT ANALYSIS (PLA)}
+
+\textcolor{red}{Simplified compared to the first generation.\\ Only the recall rate (total TP / total ground-truth area) is considered.}
+
+\subsection{EVALUATION OF THE OCR TEXT RECOGNITION}
+
+\textcolor{red}{Concatenate the BBoxGroup text of the ground-truth data and the alignment output respectively, and calculate the WER by comparing the two concatenated strings}
+
+\subsection{evaluation of the alignment result}
+
+\textcolor{red}{Similar to PLA evaluation, but this time in 1D. The result is also a recall rate.}
+
+\subsection{MULTI-SCALE EVALUATION}
+\label{sec:multi-scale-eval}
+
+\textcolor{red}{when the scale of the OCR output changes, the objects in the ground-truth data could be easily regrouped to fit the new scale.}
+
+
+\section{SOFTWARE SETUP}
+
+\textcolor{red}{write this when the software comes to the final stable version}
+
+\section{TESSERACT TRAINING AND MODEL COMBINATION}
+
+\textcolor{red}{explains the tesseract training \& eval process and results of using different models}
+
+\section{VARIATIONS OF THE ALIGNMENT ALGORITHM}
+
+\textcolor{red}{compares the basic alignment algorithm, alignment algorithm which ignores common words, algorithm with time constraints, etc}
+
+\section{Conclusion}
+
+\begin{thebibliography}{9}
+
+\bibitem{lectcap} 
+Cambridge Centre for Teaching and Learning: The `Lecture Capture' Project,
+\\ \texttt{https://www.cctl.cam.ac.uk/projects/lecture-capture}
+
+\bibitem{digitstrategy} 
+University of Cambridge: Digital Strategy for Education (2016 - 2020),
+\\ \texttt{https://www.educationalpolicy.admin.cam.ac.uk/files/digitalstrategy\_final.pdf}
+    
+\bibitem{tesseract} 
+Tesseract OCR: Documentation Page,
+\\ \texttt{https://github.com/tesseract-ocr/tesseract/blob/master/README.md}
+
+\bibitem{googlecloud} 
+Google Cloud Speech-to-Text API: Reference Page for Client Libraries,
+\\ \texttt{https://cloud.google.com/speech-to-text/docs/reference/libraries}
+
+\bibitem{transslide}
+Kawahara, Tatsuya, Yusuke Nemoto, and Yuya Akita. ``Automatic lecture transcription by exploiting presentation slide information for language model adaptation.'' \textit{Acoustics, Speech and Signal Processing, 2008. ICASSP 2008. IEEE International Conference on.} IEEE, 2008.
+
+\bibitem{tesseval}
+Tafti, Ahmad P., et al. ``OCR as a Service: An Experimental Evaluation of Google Docs OCR, Tesseract, ABBYY FineReader, and Transym.'' \textit{International Symposium on Visual Computing.} Springer, Cham, 2016.
+
+\bibitem{diffref}
+Lanchantin, Pierre, et al. ``The development of the Cambridge University alignment systems for the Multi-Genre Broadcast challenge.'' \textit{Automatic Speech Recognition and Understanding (ASRU), 2015 IEEE Workshop on.} IEEE, 2015.
+
+\end{thebibliography}
+
+\renewcommand{\appendixname}{APPENDIX}
+
+\titleformat{\section}
+{\large\bfseries\centering} % format
+{\appendixname~\thesection:} % label
+{1ex} % space between label & text
+{\MakeUppercase} % before code
+
+% APPENDIX
+
+\begin{appendices}
+
+\newpage
+\section{TESSERACT OCR}
+
+\textcolor{red}{\large The old notes on tesseract seem to be out-of-date. need to read the docs again and make a new version}
+
+\newpage
+\section{PREVIOUS EVALUATION FRAMEWORK}
+\label{sec:first-gen-eval}
+
+This appendix briefly explains the previous (first generation) evaluation framework of the system. The first generation framework evaluates different parts of the system respectively, including the page layout analysis system (OCR), text recognition system (OCR), speech recogniser and the alignment algorithm.
+
+\subsection{EVALUATION OF THE PAGE LAYOUT ANALYSIS}
+\label{sec:first-gen-eval-pla}
+
+\begin{figure}[!htb]
+    \centering
+    \includegraphics[width=0.7\textwidth]{evalbb}
+    \caption{TP, TN, FP and FN in the evaluation of page layout analysis}
+    \label{fig:evalbb}
+\end{figure}
+
+The page layout analysis (PLA) of the OCR engine produces a set of bounding-boxes which identifies the text regions in the PDF input. In \Cref{fig:evalbb}, we can see how true positives (TP), true negatives (TN), false positives (FP) and false negatives (FN) are identified, given the ground-truth data of bounding-boxes. Here we assume that the bounding-boxes are non-overlapping for ground-truth and OCR output respectively.
+
+The key evaluation parameters are the true positive rate (TPR) and true negative rate (TNR), where TPR = TP / (TP + FN) and TNR = TN / (TN + FP). TPR is also called the recall rate. To calculate TPR and TNR, we sum up all rectangle areas for each certain type (TP, TN, FP and FN) and then substitute the values into the above equations.
+
+\subsection{EVALUATION OF THE TEXT \& SPEECH RECOGNITION}
+
+For each bounding-box (chunk) in the PDF input, we calcuate the standard word error rate (WER) by comparing the extracted text from the OCR engine and the ground-truth text. The key parameter for text recognition is the overall WER, which is defined as the sum of WERs of chunks, each weighted by its fraction of bounding-box area relative to the total bounding-box area.
+
+As for the speech recognition, it can easily be evaluated by the standard WER if we have the ground-truth lecture transcript.
+
+\subsection{EVALUATION OF THE ALIGNMENT ALGORITHM}
+
+Currently the accuracy of alignment algorithm is given by:
+$$ \frac{\text{number of matches that agree with the ground-truth matches}}{\text{number of ground-truth matches}} $$
+
+\subsection{EVALUATION RESULTS OF THE FIRST GENERATION FRAMEWORK}
+
+A set of evaluation results for an hour-long recorded lecture \footnote{2010 Easter Term, Part IA Mathematics, Lecture 1. Usage of lecture data permitted by Prof.\,Malcolm Smith} are shown in \Cref{tab:eval}. Currently the system uses the Python library \texttt{jiwer} to calculate WERs. The TPR (also referred as recall rate) is not very high because about half of the handwritten equations have not been recalled by Tesseract. The WER for Handout Text Recognition is high since Tesseract has poor accuracy on recognising handwritten text and equations\footnote{Handwritten text \& equations comprise more than 50\% of information in the test handout}. The lecturer almost never reads the handout verbatim, so the current alignment algorithm based on simple word match yields an accuracy of only 16\%.
+
+\begin{table}[!htb]
+    \centering
+    \begin{tabular}{|c|c|c|c|c|}
+        \hline
+        TPR & TNR & WER (Handout) & WER (Speech) & Alignment Accuracy \\ \hline
+        62.73\% & 92.38\% & 57.55\% & 14.35\% & 15.79\% \\ \hline
+    \end{tabular}
+    \caption{Evaluation results tested on an hour-long recorded lecture data. \textbf{TPR}: True Positive Rate; \textbf{TNR}: True Negative Rate; \textbf{WER (Handout)}: Word Error Rate for Handout Text Recognition; \textbf{WER (Speech)}: Word Error Rate for Speech Recognition}
+    \label{tab:eval}
+\end{table}
+    
+\end{appendices}
+
+
+
+\end{document}
